@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Best ICT TEchnicians – Vote</title>
+  <script src="https://js.paystack.co/v1/inline.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+    import { getDatabase, ref, onValue, push, set, update, increment } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
+
+    // Updated Firebase Configuration
+    const firebaseConfig = {
+      apiKey: "AIzaSyDUDugGKhLS1AdqcOXNGFy395JueBma8lA",
+      authDomain: "jerald-voting.firebaseapp.com",
+      databaseURL: "https://jerald-voting-default-rtdb.firebaseio.com",
+      projectId: "jerald-voting",
+      storageBucket: "jerald-voting.firebasestorage.app",
+      messagingSenderId: "114440620052",
+      appId: "1:114440620052:web:ab12551cb9514f760aff01",
+      measurementId: "G-G8KM86CXGP"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    // Updated Paystack Public Key
+    const PAYSTACK_PUBLIC_KEY = "pk_live_aaff9c639dada5e8b6d421bd699b7cc73d752cfb";
+    const VOTE_PRICE = 40;
+
+    const grid = document.getElementById("grid");
+    const modal = document.getElementById("modal");
+    const closeBtn = document.getElementById("close");
+    const form = document.getElementById("voteForm");
+    const candNameEl = document.getElementById("candName");
+    const totalEl = document.getElementById("total");
+    const status = document.getElementById("status");
+    const qtyInput = document.getElementById("qty");
+
+    let selected = null;
+    let quantity = 1;
+
+    document.getElementById("minus").onclick = () => {
+      if (quantity > 1) {
+        quantity--;
+        qtyInput.value = quantity;
+        updateTotal();
+      }
+    };
+
+    document.getElementById("plus").onclick = () => {
+      quantity++;
+      qtyInput.value = quantity;
+      updateTotal();
+    };
+
+    document.querySelectorAll(".quick").forEach(btn => {
+      btn.onclick = () => {
+        quantity = parseInt(btn.dataset.q);
+        qtyInput.value = quantity;
+        updateTotal();
+      };
+    });
+
+    qtyInput.oninput = () => {
+      quantity = Math.max(1, parseInt(qtyInput.value) || 1);
+      qtyInput.value = quantity;
+      updateTotal();
+    };
+
+    function updateTotal() {
+      totalEl.textContent = `KES ${(quantity * VOTE_PRICE).toFixed(2)}`;
+    }
+
+    onValue(ref(db, "candidates"), (snap) => {
+      const data = snap.val();
+      grid.innerHTML = "";
+
+      if (!data) {
+        grid.innerHTML = `<p style="grid-column:1/-1;text-align:center;color:#94a3b8;padding:60px;">No candidates yet</p>`;
+        return;
+      }
+
+      Object.entries(data)
+        .map(([id, c]) => ({ id, ...c }))
+        .sort((a, b) => (b.votes || 0) - (a.votes || 0))
+        .forEach((c, index) => {
+          let rankBadge = "";
+          if (index === 0) rankBadge = `<div class="rank rank-1">1st</div>`;
+          else if (index === 1) rankBadge = `<div class="rank rank-2">2nd</div>`;
+          else if (index === 2) rankBadge = `<div class="rank rank-3">3rd</div>`;
+
+          const card = document.createElement("div");
+          card.className = "card";
+          card.innerHTML = `
+            <div class="img-wrap">
+              ${rankBadge}
+              <img src="${c.photo || 'https://via.placeholder.com/400x300?text=No+Photo'}" alt="${c.name}">
+            </div>
+            <div class="body">
+              <h3>${c.name}</h3>
+              <div class="votes">${c.votes || 0} votes</div>
+              <button class="vote-btn" data-id="${c.id}" data-name="${c.name}">Vote Now</button>
+            </div>
+          `;
+          grid.appendChild(card);
+        });
+
+      document.querySelectorAll(".vote-btn").forEach(btn => {
+        btn.onclick = () => {
+          selected = { id: btn.dataset.id, name: btn.dataset.name };
+          candNameEl.textContent = selected.name;
+          quantity = 1;
+          qtyInput.value = 1;
+          updateTotal();
+          status.textContent = "";
+          form.reset();
+          modal.style.display = "flex";
+        };
+      });
+    });
+
+    closeBtn.onclick = () => modal.style.display = "none";
+    modal.onclick = (e) => { if (e.target === modal) modal.style.display = "none"; };
+
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const email = document.getElementById("email").value.trim();
+      const phone = document.getElementById("phone").value.trim();
+      const name = document.getElementById("voterName").value.trim();
+
+      if (!email || !phone || !name) {
+        status.textContent = "Please fill all fields";
+        status.style.color = "#f87171";
+        return;
+      }
+
+      status.textContent = "Opening payment...";
+      status.style.color = "#94a3b8";
+
+      const amount = quantity * VOTE_PRICE * 100;
+
+      const handler = PaystackPop.setup({
+        key: PAYSTACK_PUBLIC_KEY,
+        email: email,
+        amount: amount,
+        currency: "KES",
+        ref: "CD_" + selected.id + "_" + Date.now(),  // CHANGED FROM "VOTE_" TO "CD_"
+        send_invoices: false,
+        send_receipts: false,
+        metadata: {
+          custom_fields: [
+            { display_name: "Customer Name", variable_name: "customer_name", value: name },
+            { display_name: "Phone", variable_name: "phone", value: phone },
+            { display_name: "Product", variable_name: "product", value: "Writable CD" },
+            { display_name: "Quantity", variable_name: "quantity", value: quantity }
+          ]
+        },
+        callback: function(response) {
+          recordVotes(name, phone, email, selected, quantity, response.reference);
+        },
+        onClose: function() {
+          status.textContent = "Payment cancelled";
+          status.style.color = "#fbbf24";
+        }
+      });
+      handler.openIframe();
+    };
+
+    async function recordVotes(name, phone, email, cand, qty, paystackRef) {
+      status.textContent = "Recording votes...";
+      try {
+        await set(push(ref(db, "votes")), {
+          candidateId: cand.id,
+          candidateName: cand.name,
+          voterName: name,
+          voterPhone: phone,
+          voterEmail: email,
+          quantity: qty,
+          amount: qty * VOTE_PRICE,
+          paystackRef: paystackRef,
+          timestamp: Date.now()
+        });
+
+        await update(ref(db, "candidates/" + cand.id), {
+          votes: increment(qty)
+        });
+
+        status.textContent = `✅ Success! ${qty} vote(s) for ${cand.name} recorded.`;
+        status.style.color = "#4ade80";
+        setTimeout(() => modal.style.display = "none", 2500);
+      } catch (err) {
+        console.error(err);
+        status.textContent = "Payment OK but failed to save. Ref: " + paystackRef;
+        status.style.color = "#f87171";
+      }
+    }
+  </script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+    header {
+      text-align: center;
+      padding: 30px 20px;
+      /* CHANGED TO BLUE GRADIENT */
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    }
+    .header-content {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .header-logo {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 3px solid white;
+    }
+    .header-text { text-align: left; }
+    .header-text h1 {
+      font-size: 2.2rem;
+      color: #ffffff;
+      margin-bottom: 6px;
+    }
+    .header-text p {
+      /* CHANGED TO LIGHT BLUE TINT */
+      color: #dbeafe;
+      font-size: 1.05rem;
+      margin: 0;
+    }
+    .grid {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px 16px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 18px;
+      justify-content: center;
+    }
+    .card {
+      background: #1e293b;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid #334155;
+      transition: transform 0.25s, box-shadow 0.25s;
+      display: flex;
+      flex-direction: column;
+    }
+    .card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 12px 28px rgba(0,0,0,0.35);
+    }
+    .img-wrap {
+      aspect-ratio: 3 / 4;
+      width: 100%;
+      overflow: hidden;
+      background: #0f172a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .img-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      object-position: center;
+    }
+    .body {
+      padding: 12px 10px 14px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .body h3 {
+      font-size: 0.95rem;
+      color: #f1f5f9;
+      line-height: 1.25;
+      margin: 0;
+    }
+    .votes {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #60a5fa;
+      margin: 0;
+    }
+    .vote-btn {
+      width: 100%;
+      padding: 9px;
+      border: none;
+      border-radius: 9px;
+      background: linear-gradient(135deg, #ef4444, #dc2626);
+      color: white;
+      font-size: 0.92rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+    .vote-btn:hover {
+      background: linear-gradient(135deg, #dc2626, #b91c1c);
+    }
+    #modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+      padding: 20px;
+    }
+    .modal-box {
+      background: #1e293b;
+      border-radius: 24px;
+      width: 100%;
+      max-width: 420px;
+      padding: 32px;
+      position: relative;
+      border: 1px solid #334155;
+    }
+    .modal-box h2 {
+      font-size: 1.5rem;
+      margin-bottom: 6px;
+      color: #f8fafc;
+    }
+    .modal-box .sub {
+      color: #94a3b8;
+      margin-bottom: 24px;
+    }
+    #close {
+      position: absolute;
+      top: 18px; right: 22px;
+      font-size: 1.8rem;
+      color: #94a3b8;
+      cursor: pointer;
+      background: none;
+      border: none;
+    }
+    .qty-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .qty-row button {
+      width: 42px; height: 42px;
+      border-radius: 10px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: white;
+      font-size: 1.3rem;
+      cursor: pointer;
+    }
+    #qty {
+      width: 70px;
+      text-align: center;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: white;
+      font-size: 1.2rem;
+      font-weight: 600;
+    }
+    .quick-btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+    .quick {
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: #cbd5e1;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .quick:hover { border-color: #3b82f6; color: white; }
+    .total {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #0f172a;
+      padding: 14px 18px;
+      border-radius: 12px;
+      margin-bottom: 22px;
+      font-size: 1.15rem;
+    }
+    .total strong { color: #fbbf24; font-size: 1.3rem; }
+    label { display: block; margin-bottom: 6px; color: #cbd5e1; font-size: 0.95rem; }
+    input[type="text"], input[type="email"], input[type="tel"] {
+      width: 100%;
+      padding: 13px 16px;
+      border-radius: 12px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: white;
+      font-size: 1rem;
+      margin-bottom: 16px;
+    }
+    input:focus { outline: none; border-color: #3b82f6; }
+    .pay {
+      width: 100%;
+      padding: 16px;
+      border: none;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: white;
+      font-size: 1.15rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    #status {
+      text-align: center;
+      margin-top: 16px;
+      font-weight: 500;
+      min-height: 24px;
+    }
+    .rank {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: white;
+      padding: 5px 10px;
+      border-radius: 20px;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.3);
+    }
+    .rank-1 { background: linear-gradient(135deg, #f59e0b, #d97706); }
+    .rank-2 { background: linear-gradient(135deg, #94a3b8, #64748b); }
+    .rank-3 { background: linear-gradient(135deg, #b45309, #92400e); }
+    footer {
+      /* CHANGED TO DARK BLUE GRADIENT */
+      background: linear-gradient(to right, #1e3a8a, #0f172a);
+      color: #94a3b8;
+      text-align: center;
+      padding: 28px 20px;
+      margin-top: 60px;
+      /* CHANGED BORDER TO BLUE */
+      border-top: 3px solid #3b82f6;
+    }
+    .footer-content p {
+      margin: 5px 0;
+      font-size: 0.95rem;
+    }
+    .footer-content p:first-child {
+      color: #ffffff;
+      font-weight: 600;
+      font-size: 1.05rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-content">
+      <img src="logo.JPG" alt="Logo" class="header-logo">
+      <div class="header-text">
+        <h1>Best I.T Technicians,Nakuru City</h1>
+        <p><b>Vote for the Best outstanding I.T Technicians Within.</b></p>
+        <p><b><i>Winner should get Atleast <u>1200+..</u> votes</i></b></p>
+        <P><i>Courtesy By : </i><b> I.T Technicians Limited Company, Kenya</b></P>
+      </div>
+    </div>
+  </header>
+
+  <div class="grid" id="grid"></div>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 ICT Nakuru I.T Technicians, Nakuru</p>
+      <p>Vote wisely · Every vote counts · Powered by I.T LIMITED COMPANY, Kenya</p>
+    </div>
+  </footer>
+
+  <!-- Modal -->
+  <div id="modal">
+    <div class="modal-box">
+      <button id="close">×</button>
+      <h2>Cast Your Vote</h2>
+      <p class="sub">For <strong id="candName"></strong></p>
+
+      <div class="qty-row">
+        <button id="minus">−</button>
+        <input type="number" id="qty" value="1" min="1">
+        <button id="plus">+</button>
+      </div>
+
+      <div class="quick-btns">
+        <button class="quick" data-q="5">×5</button>
+        <button class="quick" data-q="10">×10</button>
+        <button class="quick" data-q="20">×20</button>
+        <button class="quick" data-q="50">×50</button>
+        <button class="quick" data-q="100">×100</button>
+      </div>
+
+      <div class="total">
+        <span>Total</span>
+        <strong id="total">KES 20.00</strong>
+      </div>
+
+      <form id="voteForm">
+        <label>Full Name</label>
+        <input type="text" id="voterName" required placeholder="Your full name">
+        <label>Email Address</label>
+        <input type="email" id="email" required placeholder="you@example.com">
+        <label>Phone Number</label>
+        <input type="tel" id="phone" required placeholder="0712 345 678">
+        <button type="submit" class="pay">Pay & Vote</button>
+      </form>
+
+      <div id="status"></div>
+    </div>
+  </div>
+</body>
+</html>
